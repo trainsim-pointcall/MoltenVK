@@ -593,6 +593,18 @@ id<MTLComputePipelineState> MVKCommandResourceFactory::newCmdDrawIndirectCountCo
 																																																						  : "cmdDrawIndirectCountConvertBuffers", owner);
 }
 
+id<MTLComputePipelineState> MVKCommandResourceFactory::newDrawIndexedICBPipeline(MVKVulkanAPIDeviceObject* owner) {
+	MVKLogInfo("TSPC indexed-count ICB experiment: GPU command generation and indirect execution range enabled.");
+	return newMTLComputePipelineState("cmdDrawIndexedICB", owner);
+}
+
+id<MTLArgumentEncoder> MVKCommandResourceFactory::newDrawIndexedICBArgumentEncoder() {
+	id<MTLFunction> function = newFunctionNamed("cmdDrawIndexedICB");
+	id<MTLArgumentEncoder> encoder = [function newArgumentEncoderWithBufferIndex:0];
+	[function release];
+	return encoder;
+}
+
 id<MTLComputePipelineState> MVKCommandResourceFactory::newCmdDrawIndirectCopyZeroDivisorVertexBuffersMTLComputePipelineState(MVKVulkanAPIDeviceObject* owner) {
 	return newMTLComputePipelineState("cmdDrawIndirectCopyZeroDivisorVertexBuffers", owner);
 }

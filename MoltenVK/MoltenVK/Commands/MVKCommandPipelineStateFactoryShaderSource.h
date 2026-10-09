@@ -27,6 +27,49 @@ static NSString* _MVKStaticCmdShaderSource = @R"(
 #include <metal_stdlib>
 using namespace metal;
 
+struct MVKIndexedICBData {
+	command_buffer commands [[id(0)]];
+	array<constant uchar*, 31> vertexBuffers [[id(1)]];
+	array<constant uchar*, 31> fragmentBuffers [[id(32)]];
+	constant uint* indices [[id(63)]];
+	constant uchar* draws [[id(64)]];
+	constant uint* count [[id(65)]];
+	device uint* drawIDs [[id(66)]];
+	device uint2* executionRange [[id(67)]];
+};
+
+struct MVKIndexedICBParams {
+	uint capacity;
+	uint stride;
+	uint vertexMask;
+	uint fragmentMask;
+	uint drawIDIndex;
+};
+
+kernel void cmdDrawIndexedICB(constant MVKIndexedICBData& data [[buffer(0)]],
+                              constant MVKIndexedICBParams& params [[buffer(1)]],
+                              uint slot [[thread_position_in_grid]]) {
+	uint count = min(*data.count, params.capacity);
+	if (slot == 0) *data.executionRange = uint2(0, count);
+	if (slot >= count) return;
+	constant auto& draw = *reinterpret_cast<constant MTLDrawIndexedPrimitivesIndirectArguments*>(data.draws + slot * params.stride);
+	if (draw.indexCount == 0 || draw.instanceCount == 0) return;
+	render_command command(data.commands, slot);
+	for (uint mask = params.vertexMask; mask; mask &= mask - 1) {
+		uint index = ctz(mask);
+		command.set_vertex_buffer(data.vertexBuffers[index], index);
+	}
+	for (uint mask = params.fragmentMask; mask; mask &= mask - 1) {
+		uint index = ctz(mask);
+		command.set_fragment_buffer(data.fragmentBuffers[index], index);
+	}
+	data.drawIDs[slot] = slot;
+	command.set_vertex_buffer(data.drawIDs + slot, params.drawIDIndex);
+	command.draw_indexed_primitives(primitive_type::triangle, draw.indexCount,
+	                               data.indices + draw.indexStart, draw.instanceCount,
+	                               draw.baseVertex, draw.baseInstance);
+}
+
 typedef struct {
 	float2 a_position [[attribute(0)]];
 	float3 a_texCoord [[attribute(1)]];

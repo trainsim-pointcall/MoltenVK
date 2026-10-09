@@ -1216,24 +1216,118 @@ void MVKCmdDrawIndexedIndirect::encode(MVKCommandEncoder* cmdEncoder) {
 	encode(cmdEncoder, cmdEncoder->getVkGraphics()._indexBuffer);
 }
 
+static void encodeIndexedCountICB(MVKCommandEncoder* cmdEncoder,
+                                  const MVKIndexMTLBufferBinding& indices,
+                                  id<MTLBuffer> draws, VkDeviceSize drawsOffset,
+                                  uint32_t stride, uint32_t capacity,
+                                  id<MTLBuffer> count, VkDeviceSize countOffset) {
+	auto* pipeline = cmdEncoder->getGraphicsPipeline();
+	if (pipeline->isTessellationPipeline() || !pipeline->needsDrawIdBuffer()
+	    || pipeline->getVkPrimitiveTopology() != VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
+	    || indices.vkIndexType != VK_INDEX_TYPE_UINT32
+	    || pipeline->getZeroDivisorVertexBindings().size() != 0
+	    || cmdEncoder->getSubpass()->isMultiview()) {
+		cmdEncoder->reportMessage(MVK_CONFIG_LOG_LEVEL_ERROR, "TSPC ICB experiment requires DrawID, uint32 triangle-list indices, and a single view without tessellation or zero divisors.");
+		abort();
+	}
+	cmdEncoder->_isIndexedDraw = true;
+	auto* pool = cmdEncoder->getCommandEncodingPool();
+	id<MTLComputePipelineState> conversion = pool->getDrawIndexedICBPipeline();
+	id<MTLArgumentEncoder> argumentEncoder = pool->getDrawIndexedICBArgumentEncoder();
+	auto* arguments = cmdEncoder->getTempMTLBuffer(argumentEncoder.encodedLength);
+	[argumentEncoder setArgumentBuffer:arguments->_mtlBuffer offset:arguments->_offset];
+
+	struct {
+		uint32_t capacity, stride, vertexMask, fragmentMask, drawIDIndex;
+	} params = {capacity, stride, 0, 0,
+	            pipeline->getImplicitBuffers(kMVKShaderStageVertex).ids[MVKImplicitBuffer::DrawId]};
+	auto& graphics = cmdEncoder->getMtlGraphics();
+	graphics._exists = {};
+	for (auto stage : {MVKMetalGraphicsStage::Vertex, MVKMetalGraphicsStage::Fragment}) {
+		auto& bindings = graphics._bindings[stage];
+		bindings.captureICBImmediateBuffers = true;
+		for (auto& buffer : bindings.icbImmediateBuffers) buffer = {};
+	}
+	cmdEncoder->finalizeDrawState(kMVKGraphicsStageRasterization);
+	MVKSmallVector<id<MTLBuffer>, 16> resources;
+	for (auto stage : {MVKMetalGraphicsStage::Vertex, MVKMetalGraphicsStage::Fragment}) {
+		auto& bindings = graphics._bindings[stage];
+		bindings.captureICBImmediateBuffers = false;
+		uint32_t mask = 0;
+		for (uint32_t index = 0; index < 31; index++) {
+			MVKStageResourceBindings::Buffer buffer = {};
+			if (graphics._exists[stage].buffers.get(index)
+			    && !(stage == MVKMetalGraphicsStage::Vertex && index == params.drawIDIndex)) {
+				buffer = bindings.icbImmediateBuffers[index].buffer
+				       ? bindings.icbImmediateBuffers[index] : bindings.buffers[index];
+				if (!buffer.buffer) {
+					cmdEncoder->reportMessage(MVK_CONFIG_LOG_LEVEL_ERROR, "TSPC ICB buffer binding %u was not materialized.", index);
+					abort();
+				}
+				mask |= 1u << index;
+				resources.push_back(buffer.buffer);
+			}
+			[argumentEncoder setBuffer:buffer.buffer offset:buffer.offset
+			                   atIndex:(stage == MVKMetalGraphicsStage::Vertex ? 1 : 32) + index];
+		}
+		if (stage == MVKMetalGraphicsStage::Vertex) params.vertexMask = mask;
+		else params.fragmentMask = mask;
+	}
+
+	auto allocation = pool->acquireIndexedICB(capacity,
+		32 - __builtin_clz(params.vertexMask | (1u << params.drawIDIndex)),
+		params.fragmentMask ? 32 - __builtin_clz(params.fragmentMask) : 0);
+	id<MTLIndirectCommandBuffer> icb = allocation.buffer;
+	auto* drawIDs = cmdEncoder->getTempMTLBuffer(capacity * sizeof(uint32_t), true);
+	auto* range = cmdEncoder->getTempMTLBuffer(sizeof(MTLIndirectCommandBufferExecutionRange), true);
+	[argumentEncoder setIndirectCommandBuffer:icb atIndex:0];
+	[argumentEncoder setBuffer:indices.mtlBuffer offset:indices.offset atIndex:63];
+	[argumentEncoder setBuffer:draws offset:drawsOffset atIndex:64];
+	[argumentEncoder setBuffer:count offset:countOffset atIndex:65];
+	[argumentEncoder setBuffer:drawIDs->_mtlBuffer offset:drawIDs->_offset atIndex:66];
+	[argumentEncoder setBuffer:range->_mtlBuffer offset:range->_offset atIndex:67];
+
+	cmdEncoder->encodeStoreActions(true);
+	id<MTLBlitCommandEncoder> reset = cmdEncoder->getMTLBlitEncoder(kMVKCommandUseDrawIndirectConvertBuffers);
+	[reset resetCommandsInBuffer:icb withRange:NSMakeRange(0, capacity)];
+	id<MTLComputeCommandEncoder> compute = cmdEncoder->getMTLComputeEncoder(kMVKCommandUseDrawIndirectConvertBuffers);
+	auto& computeState = cmdEncoder->getMtlCompute();
+	computeState.bindPipeline(compute, conversion);
+	computeState.bindBuffer(compute, arguments->_mtlBuffer, arguments->_offset, 0);
+	computeState.bindStructBytes(compute, &params, 1);
+	[compute useResource:icb usage:MTLResourceUsageWrite];
+	[compute useResource:draws usage:MTLResourceUsageRead];
+	[compute useResource:count usage:MTLResourceUsageRead];
+	[compute useResource:indices.mtlBuffer usage:MTLResourceUsageRead];
+	[compute useResource:drawIDs->_mtlBuffer usage:MTLResourceUsageWrite];
+	[compute useResource:range->_mtlBuffer usage:MTLResourceUsageWrite];
+	for (auto buffer : resources) [compute useResource:buffer usage:MTLResourceUsageRead];
+	[compute dispatchThreads:MTLSizeMake(capacity, 1, 1)
+	     threadsPerThreadgroup:MTLSizeMake(conversion.threadExecutionWidth, 1, 1)];
+
+	cmdEncoder->beginMetalRenderPass(kMVKCommandUseRestartSubpass);
+	cmdEncoder->finalizeDrawState(kMVKGraphicsStageRasterization);
+	id<MTLRenderCommandEncoder> render = cmdEncoder->_mtlRenderEncoder;
+	[render useResource:indices.mtlBuffer usage:MTLResourceUsageRead stages:MTLRenderStageVertex];
+	[render useResource:drawIDs->_mtlBuffer usage:MTLResourceUsageRead stages:MTLRenderStageVertex];
+	for (auto buffer : resources)
+		[render useResource:buffer usage:MTLResourceUsageRead stages:MTLRenderStageVertex | MTLRenderStageFragment];
+	[render executeCommandsInBuffer:icb indirectBuffer:range->_mtlBuffer indirectBufferOffset:range->_offset];
+	[cmdEncoder->_mtlCmdBuffer addCompletedHandler:^(id<MTLCommandBuffer> completed) {
+		pool->returnIndexedICB(allocation);
+	}];
+}
+
 void MVKCmdDrawIndexedIndirect::encode(MVKCommandEncoder* cmdEncoder, const MVKIndexMTLBufferBinding& ibbOrig) {
+	if (_mtlCountBuffer && _drawCount > 0) {
+		encodeIndexedCountICB(cmdEncoder, ibbOrig, _mtlIndirectBuffer, _mtlIndirectBufferOffset,
+		                      _mtlIndirectBufferStride, _drawCount, _mtlCountBuffer, _mtlCountBufferOffset);
+		return;
+	}
 
 	id<MTLBuffer> indirectBuffer = _mtlIndirectBuffer;
 	VkDeviceSize indirectBufferOffset = _mtlIndirectBufferOffset;
 	uint32_t indirectBufferStride = _mtlIndirectBufferStride;
-	if (_mtlCountBuffer && _drawCount > 0) {
-		auto* convertedBuffer = encodeIndirectCountConversion(cmdEncoder,
-				indirectBuffer,
-				indirectBufferOffset,
-				indirectBufferStride,
-				_mtlCountBuffer,
-				_mtlCountBufferOffset,
-				_drawCount,
-				true);
-		indirectBuffer = convertedBuffer->_mtlBuffer;
-		indirectBufferOffset = convertedBuffer->_offset;
-		indirectBufferStride = sizeof(MTLDrawIndexedPrimitivesIndirectArguments);
-	}
 
     cmdEncoder->_isIndexedDraw = true;
 

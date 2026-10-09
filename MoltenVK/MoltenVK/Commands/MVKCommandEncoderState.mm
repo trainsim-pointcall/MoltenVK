@@ -398,12 +398,15 @@ static void bindImmediateData(id<MTLCommandEncoder> encoder,
                               MVKCommandEncoder& mvkEncoder,
                               const uint8_t* data, size_t size,
                               uint32_t idx,
-                              const MVKResourceBinder& RESTRICT binder) {
-	if (size < 4096) {
+                              const MVKResourceBinder& RESTRICT binder,
+                              MVKStageResourceBindings& bindings) {
+	if (size < 4096 && !bindings.captureICBImmediateBuffers) {
 		binder.setBytes(encoder, data, size, idx);
 	} else {
 		const MVKMTLBufferAllocation* alloc = mvkEncoder.copyToTempMTLBufferAllocation(data, size);
 		binder.setBuffer(encoder, alloc->_mtlBuffer, alloc->_offset, idx);
+		if (bindings.captureICBImmediateBuffers)
+			bindings.icbImmediateBuffers[idx] = {alloc->_mtlBuffer, alloc->_offset};
 	}
 }
 
@@ -411,8 +414,9 @@ static void bindImmediateData(id<MTLCommandEncoder> encoder,
                               MVKCommandEncoder& mvkEncoder,
                               MVKArrayRef<const uint32_t> data,
                               uint32_t idx,
-                              const MVKResourceBinder& RESTRICT binder) {
-	bindImmediateData(encoder, mvkEncoder, reinterpret_cast<const uint8_t*>(data.data()), data.byteSize(), idx, binder);
+                              const MVKResourceBinder& RESTRICT binder,
+                              MVKStageResourceBindings& bindings) {
+	bindImmediateData(encoder, mvkEncoder, reinterpret_cast<const uint8_t*>(data.data()), data.byteSize(), idx, binder, bindings);
 }
 
 /** Updates a value at the given index in the given vector, resizing if needed. */
@@ -447,7 +451,7 @@ static void executeBindOp(id<MTLCommandEncoder> encoder,
 		if (!exists.buffers.get(target) || bindings.buffers[target].buffer != buffer.buffer) {
 			exists.buffers.set(target);
 			bindings.buffers[target] = buffer;
-			bindImmediateData(encoder, mvkEncoder, reinterpret_cast<const uint8_t*>(src), count, target, binder);
+			bindImmediateData(encoder, mvkEncoder, reinterpret_cast<const uint8_t*>(src), count, target, binder, bindings);
 		}
 		return;
 	}
@@ -677,23 +681,23 @@ static void bindMetalResources(id<MTLCommandEncoder> encoder,
 		bindings.buffers[idx] = MVKStageResourceBindings::ImplicitBuffer(buffer);
 		switch (nvbuffer) {
 			case MVKNonVolatileImplicitBuffer::PushConstant:
-				bindImmediateData(encoder, mvkEncoder, pushConstants, common._layout->getPushConstantsLength(), idx, binder);
+				bindImmediateData(encoder, mvkEncoder, pushConstants, common._layout->getPushConstantsLength(), idx, binder, bindings);
 				break;
 			case MVKNonVolatileImplicitBuffer::Swizzle:
-				bindImmediateData(encoder, mvkEncoder, getImplicitBindingData(implicitBufferData.textureSwizzles, resourceCounts.textureIndex), idx, binder);
+				bindImmediateData(encoder, mvkEncoder, getImplicitBindingData(implicitBufferData.textureSwizzles, resourceCounts.textureIndex), idx, binder, bindings);
 				break;
 			case MVKNonVolatileImplicitBuffer::BufferSize:
-				bindImmediateData(encoder, mvkEncoder, getImplicitBindingData(implicitBufferData.bufferSizes, resourceCounts.bufferIndex), idx, binder);
+				bindImmediateData(encoder, mvkEncoder, getImplicitBindingData(implicitBufferData.bufferSizes, resourceCounts.bufferIndex), idx, binder, bindings);
 				break;
 			case MVKNonVolatileImplicitBuffer::DynamicOffset:
-				bindImmediateData(encoder, mvkEncoder, getImplicitBindingData(implicitBufferData.dynamicOffsets, resourceCounts.dynamicOffsetBufferIndex), idx, binder);
+				bindImmediateData(encoder, mvkEncoder, getImplicitBindingData(implicitBufferData.dynamicOffsets, resourceCounts.dynamicOffsetBufferIndex), idx, binder, bindings);
 				break;
 			case MVKNonVolatileImplicitBuffer::ViewRange: {
 				uint32_t viewRange[] = {
 					mvkEncoder.getSubpass()->getFirstViewIndexInMetalPass(mvkEncoder.getMultiviewPassIndex()),
 					mvkEncoder.getSubpass()->getViewCountInMetalPass(mvkEncoder.getMultiviewPassIndex())
 				};
-				binder.setBytes(encoder, viewRange, sizeof(viewRange), idx);
+				bindImmediateData(encoder, mvkEncoder, reinterpret_cast<const uint8_t*>(viewRange), sizeof(viewRange), idx, binder, bindings);
 				break;
 			}
 			case MVKNonVolatileImplicitBuffer::EmulatedReversedDepthViewport:
@@ -702,7 +706,7 @@ static void bindMetalResources(id<MTLCommandEncoder> encoder,
 				                  reinterpret_cast<const uint8_t*>(&implicitBufferData.emulatedReversedDepthViewportMask),
 				                  sizeof(implicitBufferData.emulatedReversedDepthViewportMask),
 				                  idx,
-				                  binder);
+				                  binder, bindings);
 				break;
 			case MVKNonVolatileImplicitBuffer::Count:
 				assert(0);

@@ -388,6 +388,9 @@ public:
 
 #pragma mark Construction
 
+	id<MTLComputePipelineState> newDrawIndexedICBPipeline(MVKVulkanAPIDeviceObject* owner);
+	id<MTLArgumentEncoder> newDrawIndexedICBArgumentEncoder();
+
 	MVKCommandResourceFactory(MVKDevice* device);
 
 	~MVKCommandResourceFactory() override;

@@ -152,6 +152,46 @@ id<MTLComputePipelineState> MVKCommandEncodingPool::getCmdDrawIndirectCopyZeroDi
 	MVK_ENC_REZ_ACCESS(_mtlDrawIndirectCopyZeroDivisorVertexBuffersComputePipelineState, newCmdDrawIndirectCopyZeroDivisorVertexBuffersMTLComputePipelineState(_commandPool));
 }
 
+id<MTLComputePipelineState> MVKCommandEncodingPool::getDrawIndexedICBPipeline() {
+	MVK_ENC_REZ_ACCESS(_drawIndexedICBPipeline, newDrawIndexedICBPipeline(_commandPool));
+}
+
+id<MTLArgumentEncoder> MVKCommandEncodingPool::getDrawIndexedICBArgumentEncoder() {
+	MVK_ENC_REZ_ACCESS(_drawIndexedICBArgumentEncoder, newDrawIndexedICBArgumentEncoder());
+}
+
+MVKIndexedICBAllocation MVKCommandEncodingPool::acquireIndexedICB(uint32_t capacity, uint32_t vertexBindings, uint32_t fragmentBindings) {
+	lock_guard<mutex> lock(_lock);
+	for (size_t index = 0; index < _availableIndexedICBs.size(); index++) {
+		auto allocation = _availableIndexedICBs[index];
+		if (allocation.capacity >= capacity && allocation.vertexBindings == vertexBindings
+		    && allocation.fragmentBindings == fragmentBindings) {
+			_availableIndexedICBs[index] = _availableIndexedICBs.back();
+			_availableIndexedICBs.pop_back();
+			return allocation;
+		}
+	}
+	MTLIndirectCommandBufferDescriptor* descriptor = [MTLIndirectCommandBufferDescriptor new];
+	descriptor.commandTypes = MTLIndirectCommandTypeDrawIndexed;
+	descriptor.inheritPipelineState = YES;
+	descriptor.inheritBuffers = NO;
+	descriptor.maxVertexBufferBindCount = vertexBindings;
+	descriptor.maxFragmentBufferBindCount = fragmentBindings;
+	capacity = mvkEnsurePowerOfTwo(capacity);
+	id<MTLIndirectCommandBuffer> buffer = [_commandPool->getMTLDevice()
+		newIndirectCommandBufferWithDescriptor:descriptor maxCommandCount:capacity
+		options:MTLResourceStorageModePrivate];
+	[descriptor release];
+	if (!buffer) abort();
+	buffer.label = @"TSPC indexed-count ICB";
+	return {buffer, capacity, vertexBindings, fragmentBindings};
+}
+
+void MVKCommandEncodingPool::returnIndexedICB(MVKIndexedICBAllocation allocation) {
+	lock_guard<mutex> lock(_lock);
+	_availableIndexedICBs.push_back(allocation);
+}
+
 id<MTLComputePipelineState> MVKCommandEncodingPool::getCmdDrawIndirectTessConvertBuffersMTLComputePipelineState(bool indexed) {
 	MVK_ENC_REZ_ACCESS(_mtlDrawIndirectTessConvertBuffersComputePipelineState[indexed ? 1 : 0], newCmdDrawIndirectTessConvertBuffersMTLComputePipelineState(indexed, _commandPool));
 }
@@ -193,6 +233,8 @@ MVKCommandEncodingPool::~MVKCommandEncodingPool() {
 /**  Ensure all cached Metal components are released. */
 void MVKCommandEncodingPool::destroyMetalResources() {
 	MVKDevice* mvkDev = _commandPool->getDevice();
+	for (auto allocation : _availableIndexedICBs) [allocation.buffer release];
+	_availableIndexedICBs.clear();
 
     for (auto& pair : _cmdBlitImageMTLRenderPipelineStates) { [pair.second release]; }
     _cmdBlitImageMTLRenderPipelineStates.clear();
@@ -246,6 +288,10 @@ void MVKCommandEncodingPool::destroyMetalResources() {
     _mtlDrawIndirectConvertBuffersComputePipelineState[0] = nil;
     _mtlDrawIndirectConvertBuffersComputePipelineState[1] = nil;
 
+	[_drawIndexedICBPipeline release];
+	_drawIndexedICBPipeline = nil;
+	[_drawIndexedICBArgumentEncoder release];
+	_drawIndexedICBArgumentEncoder = nil;
     [_mtlDrawIndirectCountConvertBuffersComputePipelineState[0] release];
     [_mtlDrawIndirectCountConvertBuffersComputePipelineState[1] release];
     _mtlDrawIndirectCountConvertBuffersComputePipelineState[0] = nil;

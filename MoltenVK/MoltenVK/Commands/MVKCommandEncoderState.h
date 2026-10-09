@@ -253,6 +253,8 @@ struct MVKStageResourceBindings {
 		bool operator==(Buffer other) const { return std::make_pair(buffer, offset) == std::make_pair(other.buffer, other.offset); }
 		bool operator!=(Buffer other) const { return !(*this == other); }
 	} buffers[kMVKMaxBufferCount];
+	Buffer icbImmediateBuffers[kMVKMaxBufferCount] = {};
+	bool captureICBImmediateBuffers = false;
 	id<MTLSamplerState> samplers[kMVKMaxSamplerCount];
 	MVKBitArray descriptorSetResourceUse[kMVKMaxDescriptorSetCount];
 	MVKOnePerEnumEntry<uint8_t, MVKNonVolatileImplicitBuffer> implicitBufferIndices = {};
