@@ -31,8 +31,6 @@ class MVKCommandPool;
 struct MVKIndexedICBAllocation {
 	id<MTLIndirectCommandBuffer> buffer;
 	uint32_t capacity;
-	uint32_t vertexBindings;
-	uint32_t fragmentBindings;
 };
 
 
@@ -132,7 +130,7 @@ public:
 	id<MTLComputePipelineState> getCmdDrawIndirectCountConvertBuffersMTLComputePipelineState(bool indexed);
 	id<MTLComputePipelineState> getDrawIndexedICBPipeline();
 	id<MTLArgumentEncoder> getDrawIndexedICBArgumentEncoder();
-	MVKIndexedICBAllocation acquireIndexedICB(uint32_t capacity, uint32_t vertexBindings, uint32_t fragmentBindings);
+	MVKIndexedICBAllocation acquireIndexedICB(uint32_t capacity);
 	void returnIndexedICB(MVKIndexedICBAllocation allocation);
 
 	/** Returns a MTLComputePipelineState for copying zero-divisor vertex data for an indirect draw. */

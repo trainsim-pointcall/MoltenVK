@@ -160,12 +160,11 @@ id<MTLArgumentEncoder> MVKCommandEncodingPool::getDrawIndexedICBArgumentEncoder(
 	MVK_ENC_REZ_ACCESS(_drawIndexedICBArgumentEncoder, newDrawIndexedICBArgumentEncoder());
 }
 
-MVKIndexedICBAllocation MVKCommandEncodingPool::acquireIndexedICB(uint32_t capacity, uint32_t vertexBindings, uint32_t fragmentBindings) {
+MVKIndexedICBAllocation MVKCommandEncodingPool::acquireIndexedICB(uint32_t capacity) {
 	lock_guard<mutex> lock(_lock);
 	for (size_t index = 0; index < _availableIndexedICBs.size(); index++) {
 		auto allocation = _availableIndexedICBs[index];
-		if (allocation.capacity >= capacity && allocation.vertexBindings == vertexBindings
-		    && allocation.fragmentBindings == fragmentBindings) {
+		if (allocation.capacity >= capacity) {
 			_availableIndexedICBs[index] = _availableIndexedICBs.back();
 			_availableIndexedICBs.pop_back();
 			return allocation;
@@ -174,9 +173,9 @@ MVKIndexedICBAllocation MVKCommandEncodingPool::acquireIndexedICB(uint32_t capac
 	MTLIndirectCommandBufferDescriptor* descriptor = [MTLIndirectCommandBufferDescriptor new];
 	descriptor.commandTypes = MTLIndirectCommandTypeDrawIndexed;
 	descriptor.inheritPipelineState = YES;
-	descriptor.inheritBuffers = NO;
-	descriptor.maxVertexBufferBindCount = vertexBindings;
-	descriptor.maxFragmentBufferBindCount = fragmentBindings;
+	descriptor.inheritBuffers = YES;
+	descriptor.maxVertexBufferBindCount = 0;
+	descriptor.maxFragmentBufferBindCount = 0;
 	capacity = mvkEnsurePowerOfTwo(capacity);
 	id<MTLIndirectCommandBuffer> buffer = [_commandPool->getMTLDevice()
 		newIndirectCommandBufferWithDescriptor:descriptor maxCommandCount:capacity
@@ -184,7 +183,7 @@ MVKIndexedICBAllocation MVKCommandEncodingPool::acquireIndexedICB(uint32_t capac
 	[descriptor release];
 	if (!buffer) abort();
 	buffer.label = @"TSPC indexed-count ICB";
-	return {buffer, capacity, vertexBindings, fragmentBindings};
+	return {buffer, capacity};
 }
 
 void MVKCommandEncodingPool::returnIndexedICB(MVKIndexedICBAllocation allocation) {

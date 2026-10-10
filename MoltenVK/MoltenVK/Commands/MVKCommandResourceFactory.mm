@@ -594,7 +594,7 @@ id<MTLComputePipelineState> MVKCommandResourceFactory::newCmdDrawIndirectCountCo
 }
 
 id<MTLComputePipelineState> MVKCommandResourceFactory::newDrawIndexedICBPipeline(MVKVulkanAPIDeviceObject* owner) {
-	MVKLogInfo("TSPC indexed-count ICB: GPU command generation and indirect execution range enabled.");
+	MVKLogInfo("TSPC indexed-count ICB: inherited buffers and indirect execution range enabled.");
 	return newMTLComputePipelineState("cmdDrawIndexedICB", owner);
 }
 

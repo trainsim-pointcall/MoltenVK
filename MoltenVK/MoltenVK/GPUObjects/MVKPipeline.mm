@@ -1187,7 +1187,7 @@ MTLRenderPipelineDescriptor* MVKGraphicsPipeline::newMTLRenderPipelineDescriptor
 
 	// Add shader stages. Compile vertex shader before others just in case conversion changes anything...like rasterizaion disable.
 	if (!addVertexShaderToPipeline(plDesc, pCreateInfo, shaderConfig, pVertexSS, pVertexFB, pFragmentSS)) { return nil; }
-	plDesc.supportIndirectCommandBuffers = needsDrawIdBuffer();
+	plDesc.supportIndirectCommandBuffers = YES;
 
 	// Vertex input
 	// This needs to happen before compiling the fragment shader, or we'll lose information on vertex attributes.
