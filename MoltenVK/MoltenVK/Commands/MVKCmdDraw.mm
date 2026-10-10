@@ -1222,14 +1222,6 @@ static void encodeIndexedCountICB(MVKCommandEncoder* cmdEncoder,
                                   uint32_t stride, uint32_t capacity,
                                   id<MTLBuffer> count, VkDeviceSize countOffset) {
 	auto* pipeline = cmdEncoder->getGraphicsPipeline();
-	if (pipeline->isTessellationPipeline() || !pipeline->needsDrawIdBuffer()
-	    || pipeline->getVkPrimitiveTopology() != VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
-	    || indices.vkIndexType != VK_INDEX_TYPE_UINT32
-	    || pipeline->getZeroDivisorVertexBindings().size() != 0
-	    || cmdEncoder->getSubpass()->isMultiview()) {
-		cmdEncoder->reportMessage(MVK_CONFIG_LOG_LEVEL_ERROR, "TSPC ICB experiment requires DrawID, uint32 triangle-list indices, and a single view without tessellation or zero divisors.");
-		abort();
-	}
 	cmdEncoder->_isIndexedDraw = true;
 	auto* pool = cmdEncoder->getCommandEncodingPool();
 	id<MTLComputePipelineState> conversion = pool->getDrawIndexedICBPipeline();
@@ -1260,10 +1252,6 @@ static void encodeIndexedCountICB(MVKCommandEncoder* cmdEncoder,
 			    && !(stage == MVKMetalGraphicsStage::Vertex && index == params.drawIDIndex)) {
 				buffer = bindings.icbImmediateBuffers[index].buffer
 				       ? bindings.icbImmediateBuffers[index] : bindings.buffers[index];
-				if (!buffer.buffer) {
-					cmdEncoder->reportMessage(MVK_CONFIG_LOG_LEVEL_ERROR, "TSPC ICB buffer binding %u was not materialized.", index);
-					abort();
-				}
 				mask |= 1u << index;
 				resources.push_back(buffer.buffer);
 			}
