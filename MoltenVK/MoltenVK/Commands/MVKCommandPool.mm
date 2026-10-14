@@ -83,6 +83,7 @@ id<MTLCommandBuffer> MVKCommandPool::getMTLCommandBuffer(MVKCommandUse cmdUse, u
 
 // Clear the command type pool member variables.
 void MVKCommandPool::trim() {
+	_commandEncodingPool.trimIndexedICB();
 #	define MVK_CMD_TYPE_POOL(cmdType)  _cmd ##cmdType ##Pool.clear();
 #	include "MVKCommandTypePools.def"
 }

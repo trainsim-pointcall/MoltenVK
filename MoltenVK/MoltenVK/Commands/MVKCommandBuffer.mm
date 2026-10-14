@@ -240,6 +240,7 @@ VkResult MVKCommandBuffer::reset(VkCommandBufferResetFlags flags) {
 	_wasExecuted = false;
 	_isExecutingNonConcurrently.clear();
 	_commandCount = 0;
+	_indexedICBMaxDrawCount = 0;
 	_currentSubpassInfo = {};
 	_needsVisibilityResultMTLBuffer = false;
 	_hasStageCounterTimestampCommand = false;
@@ -387,7 +388,12 @@ void MVKCommandBuffer::recordExecuteCommands(MVKArrayRef<MVKCommandBuffer*const>
 	for (MVKCommandBuffer* cmdBuff : secondaryCommandBuffers) {
 		if (cmdBuff->_needsVisibilityResultMTLBuffer) { _needsVisibilityResultMTLBuffer = true; }
 		if (cmdBuff->_hasStageCounterTimestampCommand) { _hasStageCounterTimestampCommand = true; }
+		recordIndexedIndirectCount(cmdBuff->_indexedICBMaxDrawCount);
 	}
+}
+
+void MVKCommandBuffer::recordIndexedIndirectCount(uint32_t maxDrawCount) {
+	_indexedICBMaxDrawCount = max(_indexedICBMaxDrawCount, maxDrawCount);
 }
 
 // Track whether a stage-based timestamp command has been added, so we know
@@ -465,6 +471,23 @@ void MVKCommandEncoder::encodeCommandsImpl(MVKCommand* command) {
 void MVKCommandEncoder::endEncoding() {
 	endCurrentMetalEncoding();
 	finishQueries();
+	for (auto& allocation : _indexedICBAllocations) { allocation = {}; }
+	_nextIndexedICB = 0;
+}
+
+id<MTLIndirectCommandBuffer> MVKCommandEncoder::getIndexedICB(uint32_t capacity) {
+	capacity = max(capacity, _cmdBuffer->_indexedICBMaxDrawCount);
+	auto& workspace = _indexedICBAllocations[_nextIndexedICB];
+	_nextIndexedICB = (_nextIndexedICB + 1) % kMVKIndexedICBWorkspaceCount;
+	if (workspace.capacity < capacity) {
+		auto* pool = getCommandEncodingPool();
+		auto allocation = pool->acquireIndexedICB(capacity);
+		workspace = allocation;
+		[_mtlCmdBuffer addCompletedHandler:^(id<MTLCommandBuffer> completed) {
+			pool->returnIndexedICB(allocation);
+		}];
+	}
+	return workspace.buffer;
 }
 
 void MVKCommandEncoder::encodeSecondary(MVKCommandBuffer* secondaryCmdBuffer) {
