@@ -28,6 +28,8 @@
 
 class MVKCommandPool;
 
+static constexpr uint32_t kMVKIndexedICBWorkspaceCount = 2;
+
 struct MVKIndexedICBAllocation {
 	id<MTLIndirectCommandBuffer> buffer;
 	uint32_t capacity;
@@ -132,6 +134,7 @@ public:
 	id<MTLArgumentEncoder> getDrawIndexedICBArgumentEncoder();
 	MVKIndexedICBAllocation acquireIndexedICB(uint32_t capacity);
 	void returnIndexedICB(MVKIndexedICBAllocation allocation);
+	void trimIndexedICB();
 
 	/** Returns a MTLComputePipelineState for copying zero-divisor vertex data for an indirect draw. */
 	id<MTLComputePipelineState> getCmdDrawIndirectCopyZeroDivisorVertexBuffersMTLComputePipelineState();
@@ -189,7 +192,7 @@ protected:
 	id<MTLComputePipelineState> _mtlDrawIndirectCountConvertBuffersComputePipelineState[2] = {nil, nil};
 	id<MTLComputePipelineState> _drawIndexedICBPipeline = nil;
 	id<MTLArgumentEncoder> _drawIndexedICBArgumentEncoder = nil;
-	MVKSmallVector<MVKIndexedICBAllocation, 16> _availableIndexedICBs;
+	MVKSmallVector<MVKIndexedICBAllocation, kMVKIndexedICBWorkspaceCount> _cachedIndexedICBs;
 	id<MTLComputePipelineState> _mtlDrawIndirectCopyZeroDivisorVertexBuffersComputePipelineState = nil;
 	id<MTLComputePipelineState> _mtlDrawIndirectTessConvertBuffersComputePipelineState[2] = {nil, nil};
 	id<MTLComputePipelineState> _mtlDrawIndexedCopyIndexBufferComputePipelineState[2] = {nil, nil};

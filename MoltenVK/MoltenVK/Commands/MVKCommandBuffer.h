@@ -21,6 +21,7 @@
 #include "MVKDevice.h"
 #include "MVKCommand.h"
 #include "MVKCommandEncoderState.h"
+#include "MVKCommandEncodingPool.h"
 #include "MVKMTLBufferAllocation.h"
 #include "MVKRenderPass.h"
 #include "MVKCmdPipeline.h"
@@ -150,6 +151,7 @@ public:
 
 	/** Called when a MVKCmdExecuteCommands is added to this command buffer. */
 	void recordExecuteCommands(MVKArrayRef<MVKCommandBuffer*const> secondaryCommandBuffers);
+	void recordIndexedIndirectCount(uint32_t maxDrawCount);
 
 	/** Called when a timestamp command is added. */
 	void recordTimestampCommand();
@@ -212,6 +214,7 @@ protected:
     MVKCommandEncodingContext* _immediateCmdEncodingContext = nullptr;
     MVKCommandEncoder* _immediateCmdEncoder = nullptr;
 	uint32_t _commandCount;
+	uint32_t _indexedICBMaxDrawCount;
 	uint32_t _secondaryInheritanceDepthAttachmentInputIndex;
 	uint32_t _secondaryInheritanceStencilAttachmentInputIndex;
 	std::atomic_flag _isExecutingNonConcurrently;
@@ -288,6 +291,7 @@ public:
 	 * then end the existing Metal render pass, and start a new one.
 	 */
 	void restartMetalRenderPassIfNeeded();
+	id<MTLIndirectCommandBuffer> getIndexedICB(uint32_t capacity);
 
 	/** If a render encoder is active, encodes store actions for all attachments to it. */
 	void encodeStoreActions(bool storeOverride = false);
@@ -545,6 +549,8 @@ protected:
 	id<MTLComputeCommandEncoder> _mtlComputeEncoder;
 	id<MTLBlitCommandEncoder> _mtlBlitEncoder;
 	id<MTLFence> _stageCountersMTLFence;
+	MVKIndexedICBAllocation _indexedICBAllocations[kMVKIndexedICBWorkspaceCount] = {};
+	uint32_t _nextIndexedICB = 0;
 	MVKPrefillMetalCommandBuffersStyle _prefillStyle;
 	VkSubpassContents _subpassContents;
 	uint32_t _renderSubpassIndex;
